@@ -25,6 +25,9 @@ dependencies:
   shared_preferences: ^2.2.2
   path_provider: ^2.1.1
 
+  # Date formatting
+  intl: ^0.18.1
+
   # UI Enhancements
   google_fonts: ^6.1.0
   flutter_animate: ^4.5.0
