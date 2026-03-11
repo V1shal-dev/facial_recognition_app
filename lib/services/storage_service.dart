@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/user_model.dart';
+import '../models/verification_history_model.dart';
 
 class StorageService {
   static const String _userKey = 'user_data';
@@ -108,6 +109,48 @@ class StorageService {
       return false;
     } catch (e) {
       print('Error deleting image: $e');
+      return false;
+    }
+  }
+
+  // Verification History Methods
+  Future<bool> saveVerificationHistory(VerificationHistory history) async {
+    try {
+      final historyList = getVerificationHistory();
+      historyList.add(history);
+      
+      // Keep only last 50 entries
+      if (historyList.length > 50) {
+        historyList.removeAt(0);
+      }
+      
+      final jsonList = historyList.map((h) => h.toJson()).toList();
+      return await _prefs!.setString('verification_history', jsonEncode(jsonList));
+    } catch (e) {
+      print('Error saving verification history: $e');
+      return false;
+    }
+  }
+
+  List<VerificationHistory> getVerificationHistory() {
+    try {
+      final jsonString = _prefs!.getString('verification_history');
+      if (jsonString != null) {
+        final List<dynamic> jsonList = jsonDecode(jsonString);
+        return jsonList.map((json) => VerificationHistory.fromJson(json)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error loading verification history: $e');
+      return [];
+    }
+  }
+
+  Future<bool> clearVerificationHistory() async {
+    try {
+      return await _prefs!.remove('verification_history');
+    } catch (e) {
+      print('Error clearing verification history: $e');
       return false;
     }
   }
