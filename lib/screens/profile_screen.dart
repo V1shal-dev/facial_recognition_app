@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../widgets/custom_button.dart';
-import '../screens/registration_screen.dart';
+import 'about_screen.dart';
+import 'registration_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -210,6 +211,20 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                     ),
 
                     const SizedBox(height: 40),
+
+                    // About
+                    CustomButton(
+                      text: 'About',
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AboutScreen(),
+                        ),
+                      ),
+                      icon: Icons.info_outline_rounded,
+                    ),
+
+                    const SizedBox(height: 16),
 
                     // Logout Button
                     CustomButton(
