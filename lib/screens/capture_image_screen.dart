@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
 import '../widgets/custom_button.dart';
@@ -22,7 +23,11 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
   List<CameraDescription>? _cameras;
   bool _isCameraInitialized = false;
   bool _isLoading = false;
+  bool _isSwitchingCamera = false;
+  bool _isInitializingCamera = false;
   File? _capturedImage;
+  /// Default front camera for all photos (profile + verification). User can flip to back.
+  bool _useFrontCamera = true;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
 
@@ -46,9 +51,21 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _cameraController?.dispose();
+    _disposeCameraController();
     _fadeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _disposeCameraController() async {
+    final controller = _cameraController;
+    _cameraController = null;
+    if (controller != null) {
+      try {
+        await controller.dispose();
+      } catch (_) {
+        // ignore: controller may already be disposed
+      }
+    }
   }
 
   @override
@@ -60,28 +77,58 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
     }
 
     if (state == AppLifecycleState.inactive) {
-      cameraController.dispose();
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = false;
+          _isInitializingCamera = false;
+          _isSwitchingCamera = false;
+        });
+      }
+      _disposeCameraController();
     } else if (state == AppLifecycleState.resumed) {
       _initializeCamera();
     }
   }
 
   Future<void> _initializeCamera() async {
-    try {
-      _cameras = await availableCameras();
+    if (_isInitializingCamera) return;
+    _isInitializingCamera = true;
+    if (mounted) {
+      setState(() {
+        _isCameraInitialized = false;
+      });
+    }
+    _fadeController.reset();
 
-      if (_cameras!.isEmpty) {
-        _showError('No cameras available');
-        return;
+    try {
+      // Release existing camera first so retake/switch works reliably (avoids CameraException).
+      await _disposeCameraController();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (!mounted) return;
+
+      if (_cameras == null || _cameras!.isEmpty) {
+        _cameras = await availableCameras();
+        if (_cameras!.isEmpty) {
+          if (mounted) {
+            setState(() => _isInitializingCamera = false);
+            _showError('No camera found. Please check device.');
+          }
+          return;
+        }
       }
 
-      // Use front camera for profile, back camera for capture
-      final camera = widget.isProfile
-          ? _cameras!.firstWhere(
-            (camera) => camera.lensDirection == CameraLensDirection.front,
-        orElse: () => _cameras!.first,
-      )
-          : _cameras!.first;
+      final CameraDescription camera;
+      if (_useFrontCamera) {
+        camera = _cameras!.firstWhere(
+          (c) => c.lensDirection == CameraLensDirection.front,
+          orElse: () => _cameras!.first,
+        );
+      } else {
+        camera = _cameras!.firstWhere(
+          (c) => c.lensDirection == CameraLensDirection.back,
+          orElse: () => _cameras!.first,
+        );
+      }
 
       _cameraController = CameraController(
         camera,
@@ -91,36 +138,76 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
       );
 
       await _cameraController!.initialize();
+      if (!mounted) return;
 
-      if (mounted) {
-        setState(() => _isCameraInitialized = true);
-        _fadeController.forward();
-      }
+      setState(() {
+        _isCameraInitialized = true;
+        _isSwitchingCamera = false;
+        _isInitializingCamera = false;
+      });
+      _fadeController.forward();
     } catch (e) {
-      _showError('Failed to initialize camera: $e');
+      if (mounted) {
+        setState(() {
+          _isSwitchingCamera = false;
+          _isInitializingCamera = false;
+          _isCameraInitialized = false;
+        });
+        _showError(_userFriendlyCameraError(e));
+      }
     }
   }
 
+  Future<void> _switchCamera() async {
+    if (_cameras == null || _cameras!.length < 2 || _isSwitchingCamera) return;
+    setState(() => _isSwitchingCamera = true);
+    _useFrontCamera = !_useFrontCamera;
+    await _initializeCamera();
+  }
+
+  bool get _hasBothCameras =>
+      _cameras != null &&
+      _cameras!.any((c) => c.lensDirection == CameraLensDirection.front) &&
+      _cameras!.any((c) => c.lensDirection == CameraLensDirection.back);
+
   Future<void> _takePicture() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return;
-    }
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
 
     try {
-      final XFile image = await _cameraController!.takePicture();
-      setState(() {
-        _capturedImage = File(image.path);
-        _isCameraInitialized = false;
-      });
+      final XFile xFile = await controller.takePicture();
+      final File tempFile = File(xFile.path);
+      if (!await tempFile.exists()) {
+        _showError('Photo could not be saved. Try again.');
+        return;
+      }
+
+      final List<int> imageBytes = await tempFile.readAsBytes();
+      final directory = await getApplicationDocumentsDirectory();
+      final String capturePath =
+          '${directory.path}/capture_temp_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final File savedFile = File(capturePath);
+      await savedFile.writeAsBytes(imageBytes);
+
+      if (mounted) {
+        setState(() {
+          _capturedImage = savedFile;
+          _isCameraInitialized = false;
+        });
+      }
     } catch (e) {
-      _showError('Failed to take picture: $e');
+      if (mounted) _showError(_userFriendlyCameraError(e));
     }
   }
 
   Future<void> _retakePicture() async {
     setState(() {
       _capturedImage = null;
+      _isCameraInitialized = false;
     });
+    await _disposeCameraController();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
     await _initializeCamera();
   }
 
@@ -179,14 +266,29 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
     }
   }
 
+  String _userFriendlyCameraError(Object e) {
+    final s = e.toString().toLowerCase();
+    if (s.contains('camera') && (s.contains('exception') || s.contains('error'))) {
+      return 'Camera busy or unavailable. Try again.';
+    }
+    if (s.contains('permission') || s.contains('denied')) {
+      return 'Camera permission is needed. Enable in Settings.';
+    }
+    if (s.contains('take') && s.contains('picture')) {
+      return 'Could not take photo. Try again.';
+    }
+    return 'Something went wrong. Please try again.';
+  }
+
   void _showError(String message) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
-          backgroundColor: Colors.red,
+          backgroundColor: Colors.red.shade700,
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -219,13 +321,13 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
               left: 0,
               right: 0,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Colors.black.withOpacity(0.7),
+                      Colors.black.withOpacity(0.75),
                       Colors.transparent,
                     ],
                   ),
@@ -245,19 +347,70 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        widget.isProfile ? 'Profile Photo' : 'Capture New Image',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.isProfile
+                                ? 'Your profile photo'
+                                : 'Verify your identity',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.3,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.isProfile
+                                ? 'We\'ll use this to verify you later'
+                                : 'Take a selfie to match your profile',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.85),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ],
                       ),
                     ),
+                    // Flip camera (front/back) - only when camera active and both available
+                    if (_isCameraInitialized &&
+                        _capturedImage == null &&
+                        _hasBothCameras)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: IconButton(
+                          icon: _isSwitchingCamera
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                )
+                              : Icon(
+                                  _useFrontCamera ? Icons.camera_rear : Icons.camera_front,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                          onPressed: _isSwitchingCamera ? null : _switchCamera,
+                          tooltip: _useFrontCamera ? 'Switch to back camera' : 'Switch to front camera',
+                          padding: const EdgeInsets.all(8),
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -315,25 +468,51 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
   }
 
   Widget _buildCameraPreview() {
+    final controller = _cameraController;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        controller.value.previewSize == null) {
+      return _buildLoadingIndicator();
+    }
+
+    final previewSize = controller.value.previewSize!;
+    // Sensor preview is often landscape (width > height). In portrait UI we need
+    // correct aspect ratio: use swapped dimensions so the preview is not stretched.
+    final double width = previewSize.width;
+    final double height = previewSize.height;
+    final bool sensorIsLandscape = width > height;
+    final double previewW = sensorIsLandscape ? height : width;
+    final double previewH = sensorIsLandscape ? width : height;
+
+    Widget preview = CameraPreview(controller);
+    if (_useFrontCamera) {
+      preview = Transform.scale(scaleX: -1, child: preview);
+    }
+
     return SizedBox.expand(
       child: FittedBox(
         fit: BoxFit.cover,
         child: SizedBox(
-          width: _cameraController!.value.previewSize!.height,
-          height: _cameraController!.value.previewSize!.width,
-          child: CameraPreview(_cameraController!),
+          width: previewW,
+          height: previewH,
+          child: preview,
         ),
       ),
     );
   }
 
   Widget _buildImagePreview() {
-    return SizedBox.expand(
-      child: Image.file(
-        _capturedImage!,
-        fit: BoxFit.cover,
-      ),
+    Widget img = Image.file(
+      _capturedImage!,
+      fit: BoxFit.cover,
     );
+
+    // Mirror the captured preview for front camera so it looks identical to the live preview.
+    if (_useFrontCamera) {
+      img = Transform.scale(scaleX: -1, child: img);
+    }
+
+    return SizedBox.expand(child: img);
   }
 
   Widget _buildLoadingIndicator() {
@@ -370,11 +549,11 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
           ),
           child: Text(
             widget.isProfile
-                ? 'Position your face in the oval'
-                : 'Align your face with the guide',
+                ? 'Position your face in the oval • Front camera'
+                : 'Align your face in the frame • Tap to capture',
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 15,
+              fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
             textAlign: TextAlign.center,
@@ -421,9 +600,11 @@ class _CaptureImageScreenState extends State<CaptureImageScreen>
             color: Colors.black.withOpacity(0.5),
             borderRadius: BorderRadius.circular(16),
           ),
-          child: const Text(
-            'Review your photo',
-            style: TextStyle(
+          child: Text(
+            widget.isProfile
+                ? 'Review your profile photo'
+                : 'Review your verification photo',
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 14,
               fontWeight: FontWeight.w500,

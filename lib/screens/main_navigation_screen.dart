@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'profile_screen.dart';
+import 'verification_history_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   final int initialIndex;
@@ -17,6 +18,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   final List<Widget> _screens = const [
     HomeScreen(),
+    VerificationHistoryScreen(),
     ProfileScreen(),
   ];
 
@@ -82,6 +84,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 icon: Icon(Icons.home_outlined, size: 28),
                 activeIcon: Icon(Icons.home, size: 28),
                 label: 'Home',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.history_rounded, size: 28),
+                activeIcon: Icon(Icons.history, size: 28),
+                label: 'History',
               ),
               BottomNavigationBarItem(
                 icon: Icon(Icons.person_outline, size: 28),
