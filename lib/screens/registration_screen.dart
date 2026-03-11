@@ -179,18 +179,20 @@ class _RegistrationScreenState extends State<RegistrationScreen> with SingleTick
                         child: Column(
                           children: [
                             Text(
-                              'Create Account',
+                              'Create account',
                               style: TextStyle(
-                                fontSize: 32,
+                                fontSize: 28,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.deepPurple.shade800,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 10),
                             Text(
-                              'Fill in your details to get started',
+                              'Next, you\'ll add a profile photo (front camera)\nso we can verify your identity later.',
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                fontSize: 16,
+                                fontSize: 14,
+                                height: 1.4,
                                 color: Colors.grey.shade600,
                               ),
                             ),

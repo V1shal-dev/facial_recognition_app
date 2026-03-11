@@ -17,6 +17,7 @@ class UserProvider with ChangeNotifier {
   UserProvider(this._storageService);
 
   // Getters
+  StorageService get storageService => _storageService;
   UserModel? get user => _user;
   String? get profileImagePath => _profileImagePath;
   String? get capturedImagePath => _capturedImagePath;
